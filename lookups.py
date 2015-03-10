@@ -11,24 +11,24 @@ import itertools
 
 import constants
 
-import boto.s3.connection
-import boto.s3.key
+import fs.s3fs
 
 ###################################################################
 # General helpers
 
 conn = None
-def _get_s3_bucket(config):
+def _get_fs(config):
+    bucket_name = config.get('S3_BUCKET_NAME')
+
     global conn
     if not conn:
-        conn = boto.s3.connection.S3Connection(
+        conn = fs.s3fs.S3FS(
+            bucket_name, "/",
             config.get('S3_ACCESS_KEY_ID'),
             config.get('S3_SECRET_ACCESS_KEY')
         )
 
-    bucket_name = config.get('S3_BUCKET_NAME')
-    bucket = conn.get_bucket(bucket_name)
-    return bucket
+    return conn
 
 
 ###################################################################
@@ -138,7 +138,7 @@ def add_cv(config, person_id, contents, filename, content_type):
     person_id = str(int(person_id))
     assert person_id != 0
 
-    bucket = _get_s3_bucket(config)
+    bucket = _get_fs(config)
 
     when = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S-")
 
@@ -154,28 +154,29 @@ def add_cv(config, person_id, contents, filename, content_type):
 #   name - full name of S3 key
 #   url - publically accessible address of the file
 #   date - when it was uploaded
-#   content_type - the mime type of the file
 def get_cv_list(config, person_id):
-    bucket = _get_s3_bucket(config)
+    fs = _get_fs(config)
 
     prefix = "cvs/" + str(person_id) + "/"
-    cvs = bucket.list(prefix)
-    cvs = reversed(sorted(cvs, key=lambda k: k.last_modified))
+    cvs = fs.listdirinfo(prefix)
+
+    cvs = reversed(sorted(cvs, key=lambda k: k[1].created_time))
 
     result = []
-    for key in cvs:
+    for cv in cvs:
         result.append({
-            'name': key.name,
-            'url': key.generate_url(expires_in=0, query_auth=False),
-            'date': key.last_modified,
-            'content_type': key.content_type,
+            'name': cv[0],
+            'url': fs.getpathurl(cv[0]),
+            #'url': cv.generate_url(expires_in=0, query_auth=False),
+            'date': cv[1].created_time
         })
+    print("result", result)
     return result
 
 # Takes an array of candidates of the same form list_candidates
 # returns. Auguments with a variable to say if they have a CV.
 def augment_if_has_cv(config, candidates):
-    bucket = _get_s3_bucket(config)
+    bucket = _get_fs(config)
 
     people_with_cvs = bucket.list("cvs/", "/")
 
@@ -201,7 +202,7 @@ def augment_if_has_cv(config, candidates):
 #   date - when it was uploaded
 #   content_type - the mime type of the file
 def recent_cvs(config):
-    bucket = _get_s3_bucket(config)
+    bucket = _get_fs(config)
 
     prefix = "cvs/"
     cvs = bucket.list(prefix)
@@ -224,7 +225,7 @@ def recent_cvs(config):
 
 def updates_join(config, email, postcode):
     email = email.lower().replace("/", "_")
-    bucket = _get_s3_bucket(config)
+    bucket = _get_fs(config)
 
     key = boto.s3.key.Key(bucket)
     key.key = "updates/" + str(email)
@@ -234,7 +235,7 @@ def updates_join(config, email, postcode):
 
 def updates_getting(config, email):
     email = email.lower().replace("/", "_")
-    bucket = _get_s3_bucket(config)
+    bucket = _get_fs(config)
 
     prefix = "updates/" + str(email)
     results = bucket.list(prefix)
